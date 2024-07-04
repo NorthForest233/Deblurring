@@ -45,7 +45,7 @@ if __name__ == '__main__':
     blurred_image = (np.asarray(image) / 255).transpose(2, 0, 1)
     height, width = image.size
 
-    kernels_size = [27]
+    kernels_size = [7, 11, 15, 21, 27] 
     
     kernel = np.loadtxt('./kernel.csv', delimiter=',')
     # latent_image = np.loadtxt('./image.csv', delimiter=',')#[::-1, ::-1]
@@ -53,9 +53,9 @@ if __name__ == '__main__':
 
     # oid = OID(blurred_image.mean(0, keepdims=True), kernels_size, device='cuda')
     # oid.I.data = torch.nn.functional.interpolate(torch.tensor(latent_image.copy(), dtype=torch.float32, device='cuda').expand(1, 3, -1, -1), size=oid.image_size, mode='bilinear').squeeze(0).mean(0, keepdims=True)
-    oid = OID(blurred_image, kernels_size, device='cuda')
-    oid.I.data = torch.nn.functional.interpolate(torch.tensor(latent_image.copy().mean(axis=0, keepdims=True), dtype=torch.float32, device='cuda').unsqueeze(0), size=oid.image_size, mode='bilinear').squeeze(0)
-    oid.K.data = torch.tensor(kernel, dtype=torch.float32, device='cuda').unsqueeze(0)
+    oid = OID(blurred_image, kernels_size, device='cuda', latent_type='gray')
+    # oid.I.data = torch.nn.functional.interpolate(torch.tensor(latent_image.copy().mean(axis=0, keepdims=True), dtype=torch.float32, device='cuda').unsqueeze(0), size=oid.image_size, mode='bilinear').squeeze(0)
+    # oid.K.data = torch.tensor(kernel, dtype=torch.float32, device='cuda').unsqueeze(0)
     oid.train(lr=1e-6, callback=callback)
 
     image = Image.fromarray((oid.estimate_latent(callback=estimate_callback) * 255).astype(np.uint8))
