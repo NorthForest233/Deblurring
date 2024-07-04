@@ -5,6 +5,7 @@ from PIL import Image
 import matplotlib.pyplot as plt
 from oid import OID
 import torchvision.transforms.v2 as transforms
+import pickle
 
 estimate_fig = None
 
@@ -56,8 +57,15 @@ if __name__ == '__main__':
     oid = OID(blurred_image, kernels_size, device='cuda', latent_type='gray')
     # oid.I.data = torch.nn.functional.interpolate(torch.tensor(latent_image.copy().mean(axis=0, keepdims=True), dtype=torch.float32, device='cuda').unsqueeze(0), size=oid.image_size, mode='bilinear').squeeze(0)
     # oid.K.data = torch.tensor(kernel, dtype=torch.float32, device='cuda').unsqueeze(0)
-    oid.train(lr=1e-6, callback=callback)
+    oid.train(callback=callback)
 
+    # with open('oid.bin', 'rb') as f:
+    #     oid = pickle.load(f)
+    # # with open('oid.bin', 'wb') as f:
+    # #     pickle.dump(oid, f)
+    # kernel = np.loadtxt('./psf.csv', delimiter=',')
+    # oid.K.data = torch.tensor(kernel, dtype=torch.float32, device='cuda').flip(0).flip(1).unsqueeze(0)
+    
     image = Image.fromarray((oid.estimate_latent(callback=estimate_callback) * 255).astype(np.uint8))
     image.save('recover.bmp')
     

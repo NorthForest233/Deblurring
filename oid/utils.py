@@ -79,7 +79,7 @@ def psf_to_otf(psf, shape):
 def adjust_kernel_center(kernel):
     device = kernel.device
     kernel = kernel.cpu().numpy()
-    X, Y = np.arange(kernel.shape[1]).reshape(1, -1), np.arange(kernel.shape[1]).reshape(-1, 1)
+    X, Y = np.arange(kernel.shape[1]).reshape(1, -1), np.arange(kernel.shape[0]).reshape(-1, 1)
     kernel_sum = kernel.sum()
     xc1 = np.sum(kernel * X) / kernel_sum
     yc1 = np.sum(kernel * Y) / kernel_sum

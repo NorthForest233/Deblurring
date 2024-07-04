@@ -32,6 +32,9 @@ class OID:
 
     def set_image(self, blurred_image):
         self.num_channels, *self.image_size = blurred_image.shape
+        # self.pad = pad
+        # self.blurred_image = torch.nn.functional.pad(
+        #     torch.tensor(blurred_image, dtype=torch.float32, device=self.device), (pad, pad, pad, pad), mode='reflect')
         self.blurred_image = torch.tensor(blurred_image, dtype=torch.float32, device=self.device)
 
         # worse_image = torch.nn.functional.interpolate(self.blurred_image.unsqueeze(0), scale_factor=self.scales[0], mode='bilinear').squeeze(0)
@@ -169,51 +172,10 @@ class OID:
                     })
             self.regularize_K()
 
-    # def L0Restoration(image, kernel, lambd, kappa=2.0):
-    #     image = torch.tensor(image, dtype=torch.float32, device='cuda')
-    #     kernel = torch.tensor(kernel, dtype=torch.float32, device='cuda')
-    #     # c, h, w = image.shape
-    #     pad_h, pad_w = kernel.shape[0] - 1, kernel.shape[1] - 1
-    #     image_padded = torch.nn.functional.pad(image, (pad_w, pad_w, pad_h, pad_h), mode='reflect')
-    #     # Im_padded = Im
-
-    #     S = image_padded.clone()
-    #     betamax = 1e5
-    #     fx = torch.tensor([[1, -1]])
-    #     fy = torch.tensor([[1], [-1]])
-    #     C, H, W = image_padded.shape
-    #     otfFx = psf_to_otf(fx, (H, W))
-    #     otfFy = psf_to_otf(fy, (H, W))
-    #     kernel_hat = psf_to_otf(kernel, (H, W)).unsqueeze(0)
-    #     density_kernel = torch.abs(kernel_hat) ** 2
-    #     Denormin2 = torch.abs(otfFx) ** 2 + torch.abs(otfFy) ** 2
-    #     if C >= 1:
-    #         Denormin2 = Denormin2.unsqueeze(0).expand(C, H, W)
-    #         kernel_hat = kernel_hat.expand(C, H, W)
-    #         density_kernel = density_kernel.expand(C, H, W)
-    #     Normin1 = torch.conj(kernel_hat) * torch.fft.fft2(S)
-
-    #     beta = kappa * lambd
-    #     while beta < betamax:
-    #         Denormin = density_kernel + beta * Denormin2
-    #         h = torch.cat((S[:, :, 1:] - S[:, :, :-1], S[:, :, :1] - S[:, :, -1:]), dim=2)
-    #         v = torch.cat((S[:, 1:, :] - S[:, :-1, :], S[:, :1, :] - S[:, -1:, :]), dim=1)
-    #         t = (h ** 2 + v ** 2).sum(dim=0, keepdim=True) < lambd / beta
-    #         h[t.expand_as(h)] = 0
-    #         v[t.expand_as(v)] = 0
-    #         Normin2 = torch.cat((h[:, :, -1:] - h[:, :, :1], -h[:, :, 1:] + h[:, :, :-1]), dim=2)
-    #         Normin2 += torch.cat((v[:, -1:, :] - v[:, :1, :], -v[:, 1:, :] + v[:, :-1, :]), dim=1)
-    #         FS = (Normin1 + beta * torch.fft.fft2(Normin2)) / Denormin
-    #         S = torch.real(torch.fft.ifft2(FS))
-    #         beta *= kappa
-
-    #     return S[:, pad_h:pad_h + H, pad_w:pad_w + W].cpu().numpy()
-
     def coarse_deblur(self, beta, lambd, kappa, beta_max, callback=None):
         for epoch in range(4):
             pad_h, pad_w = self.K.shape[1] - 1, self.K.shape[2] - 1
             image_padded = torch.nn.functional.pad(self.B, (pad_w, pad_w, pad_h, pad_h), mode='reflect')
-            # Im_padded = Im
             # image_padded = self.B
 
             S = image_padded.clone()
@@ -317,7 +279,7 @@ class OID:
 
     #     return x
 
-    def train(self, lr, callback=None):
+    def train(self, callback=None):
         for i, scale in enumerate(self.scales):
             if i > 0:
                 if self.latent_type == 'gray':
@@ -326,6 +288,7 @@ class OID:
                 elif self.latent_type == 'color':
                     self.B = torch.nn.functional.interpolate(self.blurred_image.unsqueeze(0),
                                                              size=self.compute_size(self.scales[i]), mode='bilinear').squeeze(0)
+
                 self.I = torch.nn.functional.interpolate(self.I.unsqueeze(0),
                                                          size=self.compute_size(self.scales[i]),
                                                          mode='bilinear').squeeze(0)
@@ -343,21 +306,60 @@ class OID:
             # W_loss = self.weight_W * torch.sum(torch.abs(1 - self.W))
             # W_entropy_loss = self.weight_entropy_W = torch.nn.functional.binary_cross_entropy_with_logits(self.W, self.W, reduction='sum')
 
-    def estimate_latent(self, weight_grad_I=3e-3, callback=None):
-        print(torch.mean(self.K ** 2))
-        latent_image = self.blurred_image.clone()
-        W = torch.sigmoid(-((self.blurred_image.mean(axis=0, keepdim=True) - self.compute_blurred_image(latent_image, self.K).mean(0, keepdim=True))
-                            ** 2 - self.weight_W) / self.weight_entropy_W)
-        for epoch in range(20):
+    def estimate_latent(self, weight_grad_I=3e-4, pad=None, callback=None):
+        if pad is None:
+            pad = self.kernels_size[-1] * 2
+        # print(torch.mean(self.K ** 2))
+        c, h, w = self.blurred_image.shape
+        blurred_image = torch.nn.functional.pad(self.blurred_image, (pad, pad, pad, pad), mode='reflect')
+        latent_image = blurred_image.clone()
+        # grad_x_I, grad_y_I = self.grad_image(latent_image)
+        # P_x = torch.max(torch.abs(grad_x_I), torch.tensor(1e-2)) ** -1.2
+        # P_y = torch.max(torch.abs(grad_y_I), torch.tensor(1e-2)) ** -1.2  # eps=1e-5就不行 真离谱
+        W = torch.sigmoid(-((blurred_image - self.compute_blurred_image(latent_image, self.K)) ** 2 - self.weight_W) / self.weight_entropy_W)
+
+        # max_blur = torch.max(blurred_image)
+        # min_blur = torch.min(blurred_image)
+        # W[blurred_image == min_blur] = 0.0
+        # W[blurred_image == max_blur] = 0.0
+        # W[W <= 0] = 1e-16
+        # W[W >= 1] = 1-1e-16
+
+        def latent_loss(latent):
+            deblur_loss = torch.sum(W * (blurred_image - self.compute_blurred_image(latent, self.K)) ** 2)
+
+            grad_x_latent, grad_y_latent = self.grad_image(latent)
+            DI_loss = weight_grad_I * (torch.sum(grad_x_latent ** 2) +
+                                       torch.sum(grad_y_latent ** 2))
+            loss = deblur_loss + DI_loss
+            return loss
+
+        grad_I = torch.func.jacrev(latent_loss)
+        b = -grad_I(torch.zeros_like(latent_image))
+        latent_image = conjugate_gradient(lambda x: grad_I(x) + b, b, latent_image, 25)
+
+        latent_image.data.clamp_(0, 1)
+        W = torch.sigmoid(-((blurred_image - self.compute_blurred_image(latent_image, self.K)) ** 2 - self.weight_W) / self.weight_entropy_W)
+
+        # max_blur = torch.max(blurred_image)
+        # min_blur = torch.min(blurred_image)
+        # W[blurred_image == min_blur] = 0.0
+        # W[blurred_image == max_blur] = 0.0
+        # W[W <= 0] = 1e-8
+        # W[W >= 1] = 1-1e-8
+
+        if not callback is None:
+            callback(np.array(latent_image[:, pad:h + pad, pad:w + pad].cpu()).transpose(1, 2, 0), 0)
+        # W = self.W
+        for epoch in range(15):
             # prev_I = self.I.clone()
             # prev_loss = 1e10
+            grad_x_I, grad_y_I = self.grad_image(latent_image)
+            P_x = torch.max(torch.abs(grad_x_I), torch.tensor(1e-2)) ** -1.2
+            P_y = torch.max(torch.abs(grad_y_I), torch.tensor(1e-2)) ** -1.2  # eps=1e-5就不行 真离谱
 
             def latent_loss(latent):
-                deblur_loss = torch.sum(W * (self.blurred_image - self.compute_blurred_image(latent, self.K)) ** 2)
-
-                grad_x_I, grad_y_I = self.grad_image(latent_image)
-                P_x = torch.max(torch.abs(grad_x_I), torch.tensor(1e-2)) ** -1.2
-                P_y = torch.max(torch.abs(grad_y_I), torch.tensor(1e-2)) ** -1.2  # eps=1e-5就不行 真离谱
+                deblur_loss = torch.sum(W * (blurred_image - self.compute_blurred_image(latent, self.K)) ** 2)
 
                 grad_x_latent, grad_y_latent = self.grad_image(latent)
                 DI_loss = weight_grad_I * (torch.sum(P_x * grad_x_latent ** 2) +
@@ -370,10 +372,9 @@ class OID:
             latent_image = conjugate_gradient(lambda x: grad_I(x) + b, b, latent_image, 25)
 
             latent_image.data.clamp_(0, 1)
-            W = torch.sigmoid(-((self.blurred_image.mean(axis=0, keepdim=True) - self.compute_blurred_image(latent_image, self.K).mean(0, keepdim=True))
-                                ** 2 - self.weight_W) / self.weight_entropy_W)
+            W = torch.sigmoid(-((blurred_image - self.compute_blurred_image(latent_image, self.K)) ** 2 - self.weight_W) / self.weight_entropy_W)
 
             if not callback is None:
-                callback(np.array(latent_image.cpu()).transpose(1, 2, 0), epoch)
+                callback(np.array(latent_image[:, pad:h + pad, pad:w + pad].cpu()).transpose(1, 2, 0), epoch)
 
         return np.array(latent_image.cpu()).transpose(1, 2, 0)
